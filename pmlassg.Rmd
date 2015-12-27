@@ -1,0 +1,125 @@
+---
+title: "Practical Machine Learning Assignment"
+author: "Akram Sofee"
+output:
+  html_document:
+    fig_height: 6
+    fig_width: 6
+  pdf_document: default
+---
+
+##Summary
+The goal of the assignment is to predict the manner in which the participants did the exercise. Ideally we would like to accurately predict all 20 test data cases provided.
+
+##Loading libraries, datasets, cleaning up
+A seed value is helpful to ensure consistent results.
+
+
+```{r, results ='hide',warning=FALSE}
+library(Hmisc)
+library(caret)
+library(randomForest)
+library(foreach)
+library(doParallel)
+set.seed(2048)
+options(warn=-1)
+```
+
+Both training and testing data are loaded, where "#DIV/0!" values are replaced with NA.
+
+```{r}
+training_data <- read.csv("pml-training.csv", na.strings=c("#DIV/0!") )
+testing_data <- read.csv("pml-testing.csv", na.strings=c("#DIV/0!") )
+```
+
+A summary of the datasets reveal that all columns 8 onwards other than 'classe' can be designated as numeric. It is advisable to thus cast/force them to be numeric.
+
+```{r}
+for(i in c(8:ncol(training_data)-1)) {training_data[,i] = as.numeric(as.character(training_data[,i]))}
+
+for(i in c(8:ncol(testing_data)-1)) {testing_data[,i] = as.numeric(as.character(testing_data[,i]))}
+```
+
+Columns that were mostly filled with NA's are not helpful when predicting.  Therefore a feature set is defined such that only complete columns are retained. Additionally, the first 7 columns (user name, timestamps etc, unlikely to be helpful) are removed. We are fortunate that the results of the assignment are sensible, however, in reality, other workarounds are advisable when encountering NAs since there may still be some valuable patterns to be discovered.
+
+```{r}
+feature_set <- colnames(training_data[colSums(is.na(training_data)) == 0])[-(1:7)]
+model_data <- training_data[feature_set]
+feature_set
+```
+
+It is now possible to build the model data derived from the feature set.
+
+##Regression Tree
+
+A regression tree can be fit to these data. We use the 'tree' package as it provides results faster than rpart from caret. 
+
+```{r}
+library(tree)
+set.seed(2048)
+tree.training=tree(classe~.,data=model_data)
+summary(tree.training)
+```
+
+The results are OK but another different can yield more impressive results. We plot the tree for posterity.
+
+```{r}
+plot(tree.training)
+text(tree.training,pretty=0, cex =.8)
+```
+
+##Random Forest
+
+We employ caret and randomForest for this purpose. 
+
+```{r}
+idx <- createDataPartition(y=model_data$classe, p=0.75, list=FALSE )
+training <- model_data[idx,]
+testing <- model_data[-idx,]
+```
+
+5 random forests with 150 trees are built each. My investigation reveals that parallel processing can vastly improve speed of model construction. The technique is employed below:
+
+```{r}
+registerDoParallel()
+x <- training[-ncol(training)]
+y <- training$classe
+
+rf <- foreach(ntree=rep(150, 6), .combine=randomForest::combine, .packages='randomForest') %dopar% {
+randomForest(x, y, ntree=ntree) 
+}
+```
+
+Error reports of both training and test data are displayed.
+```{r}
+trainpred <- predict(rf, newdata=training)
+confusionMatrix(trainpred,training$classe)
+
+
+testpred <- predict(rf, newdata=testing)
+confusionMatrix(testpred,testing$classe)
+```
+
+##Conclusion and Test Data Submit
+--------------------------------
+
+The confusion matrix of the randomForest method suggests that as far as this assignment dataset is concerned, the predictions are too accurate to be true in real life. I suspect the data was tailored to facilitate learning for students such as myself, or, the participants of the dataset were provided with very specific instructions and were highly cooperative.  
+
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+
+x <- testing_data
+x <- x[feature_set[feature_set!='classe']]
+answers <- predict(rf, newdata=x)
+
+answers
+
+pml_write_files(answers)
+```
